@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>简单聊天室</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #edf2f7; color: #243247; font: 16px system-ui, sans-serif; }
+    main { max-width: 720px; margin: auto; background: white; border-radius: 16px; padding: 24px; box-shadow: 0 8px 32px #24324712; }
+    h1 { margin: 0 0 8px; }
+    .hint { color: #64748b; }
+    input, textarea, button { font: inherit; border-radius: 8px; padding: 12px; }
+    input, textarea { width: 100%; border: 1px solid #cbd5e1; margin: 8px 0 16px; }
+    #messages { height: 360px; overflow-y: auto; background: #f8fafc; padding: 16px; border-radius: 8px; margin: 8px 0 20px; }
+    article { padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
+    article p { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    article small { color: #64748b; margin-left: 12px; }
+    button { border: 0; background: #2563eb; color: white; cursor: pointer; }
+    button:disabled { opacity: .5; }
+    #status { min-height: 24px; color: #64748b; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>💬 简单聊天室</h1>
+  <p class="hint">输入昵称就能聊天，消息每秒自动更新。</p>
+  <label for="name">你的昵称</label>
+  <input id="name" maxlength="20" placeholder="例如：小明" autocomplete="nickname">
+  <section id="messages" aria-label="聊天记录" aria-live="polite"></section>
+  <form id="form">
+    <label for="text">消息</label>
+    <textarea id="text" maxlength="500" rows="3" placeholder="说点什么吧…" required></textarea>
+    <button id="send" type="submit">发送消息</button>
+  </form>
+  <p id="status" role="status"></p>
+</main>
+<script>
+  const nameInput = document.querySelector('#name');
+  const textInput = document.querySelector('#text');
+  const messages = document.querySelector('#messages');
+  const status = document.querySelector('#status');
+  const send = document.querySelector('#send');
+  let lastId = -1;
+  let refreshing = false;
+  try { nameInput.value = localStorage.getItem('chat-name') || ''; } catch {}
+
+  async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      const response = await fetch('/api/messages');
+      if (!response.ok) throw new Error('读取消息失败');
+      const data = await response.json();
+      const newest = data.length ? data[data.length - 1].id : 0;
+      if (newest !== lastId) {
+        const nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
+        messages.replaceChildren();
+        if (!data.length) messages.textContent = '还没有消息，来打个招呼吧！';
+        for (const item of data) {
+          const article = document.createElement('article');
+          const author = document.createElement('strong');
+          author.textContent = item.name;
+          const time = document.createElement('small');
+          time.textContent = new Date(item.time).toLocaleTimeString();
+          const body = document.createElement('p');
+          body.textContent = item.text;
+          article.append(author, time, body);
+          messages.append(article);
+        }
+        if (nearBottom || lastId === -1) messages.scrollTop = messages.scrollHeight;
+        lastId = newest;
+      }
+      if (status.dataset.connectionError) {
+        status.textContent = '连接已恢复';
+        delete status.dataset.connectionError;
+      }
+    } catch {
+      status.textContent = '连接失败，正在自动重试…';
+      status.dataset.connectionError = 'true';
+    } finally { refreshing = false; }
+  }
+
+  document.querySelector('#form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const name = nameInput.value.trim();
+    const text = textInput.value.trim();
+    if (!name || !text) { status.textContent = '请先输入昵称和消息'; return; }
+    send.disabled = true;
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, text})
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '发送失败');
+      try { localStorage.setItem('chat-name', name); } catch {}
+      textInput.value = '';
+      status.textContent = '已发送';
+      await refresh();
+      textInput.focus();
+    } catch (error) { status.textContent = error.message; }
+    finally { send.disabled = false; }
+  });
+  refresh();
+  setInterval(refresh, 1000);
+</script>
+</body>
+</html>
